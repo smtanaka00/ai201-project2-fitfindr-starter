@@ -18,6 +18,8 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import re
+
 from tools import search_listings, suggest_outfit, create_fit_card
 
 
@@ -42,7 +44,44 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "error": None,               # set if the interaction ended early
+        "notes": [],                 # non-fatal events (e.g. fallback used)
     }
+
+
+# ── query parsing ───────────────────────────────────────────────────────────--
+
+def _parse_query(query: str) -> dict:
+    """
+    Extract a description, optional size, and optional max_price from the raw
+    free-text query. Uses regex rather than an LLM call so parsing is fast and
+    deterministic (see planning.md, State Management).
+
+    Returns a dict: {"description": str, "size": str | None, "max_price": float | None}
+    """
+    working = query
+
+    # Price: "under $30", "below 40", "$30" — capture the first number that follows
+    # a price cue (or a bare "$N"). Strip the matched phrase from the description.
+    max_price = None
+    price_match = re.search(r"(?:under|below|less than|max)\s*\$?\s*(\d+(?:\.\d+)?)", working, re.I)
+    if not price_match:
+        price_match = re.search(r"\$\s*(\d+(?:\.\d+)?)", working)
+    if price_match:
+        max_price = float(price_match.group(1))
+        working = working.replace(price_match.group(0), " ")
+
+    # Size: only when stated explicitly via "size X" / "in size X" — the dataset uses
+    # mixed formats so we don't guess sizes from arbitrary tokens.
+    size = None
+    size_match = re.search(r"\bsize\s+([A-Za-z0-9/.]+)", working, re.I)
+    if size_match:
+        size = size_match.group(1)
+        working = working.replace(size_match.group(0), " ")
+
+    # Whatever remains, with filler price/size words cleaned up, is the description.
+    description = re.sub(r"\s+", " ", working).strip(" ,.-")
+
+    return {"description": description, "size": size, "max_price": max_price}
 
 
 # ── planning loop ─────────────────────────────────────────────────────────────
@@ -92,9 +131,50 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Step 1: fresh session — single source of truth for this interaction.
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: parse the free-text query into structured search parameters.
+    parsed = _parse_query(query)
+    session["parsed"] = parsed
+
+    # Step 3: search. search_listings runs its own size-drop fallback internally,
+    # so an empty result here means nothing matched even after loosening.
+    results = search_listings(
+        description=parsed["description"],
+        size=parsed["size"],
+        max_price=parsed["max_price"],
+    )
+    session["search_results"] = results
+
+    # Early-exit on no match — do NOT run downstream LLM tools on empty input.
+    if not results:
+        session["error"] = (
+            "No listings matched your search — try fewer keywords, a higher price, "
+            "or dropping the size."
+        )
+        return session
+
+    # If a size was requested but the top result doesn't satisfy it, the match came
+    # from the fallback pass. Record that so the UI can surface it to the user.
+    if parsed["size"] and parsed["size"].lower() not in results[0]["size"].lower():
+        session["notes"].append(
+            f"No exact match for size '{parsed['size']}' — showing the closest "
+            "results with the size filter relaxed."
+        )
+
+    # Step 4: select the top-ranked listing for styling.
+    session["selected_item"] = results[0]
+
+    # Step 5: outfit suggestion (handles empty wardrobe internally).
+    session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+
+    # Step 6: fit card, gated on having an outfit suggestion to caption.
+    session["fit_card"] = create_fit_card(
+        session["outfit_suggestion"], session["selected_item"]
+    )
+
+    # Step 7: return the completed session.
     return session
 
 

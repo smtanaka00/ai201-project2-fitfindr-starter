@@ -43,8 +43,40 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
            string and return it along with session["outfit_suggestion"] and
            session["fit_card"].
     """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    # Clean the raw input — treat blank/whitespace-only queries as missing.
+    query = (user_query or "").strip()
+    if not query:
+        return "Please enter what you're looking for.", "", ""
+
+    # Map the radio choice to the matching wardrobe; default to the example.
+    wardrobe = (
+        get_empty_wardrobe()
+        if wardrobe_choice == "Empty wardrobe (new user)"
+        else get_example_wardrobe()
+    )
+
+    # Run the planning loop.
+    session = run_agent(query=query, wardrobe=wardrobe)
+
+    # Error path: surface the message in the first panel, leave the rest blank.
+    if session["error"]:
+        return session["error"], "", ""
+
+    # Success path: format the selected listing into a readable block. Any fallback
+    # notes are prepended so the user knows the search was relaxed.
+    item = session["selected_item"]
+    listing_text = "\n".join([
+        item["title"],
+        f"Price: ${item['price']:g}  |  Size: {item['size']}  |  {item['condition']}",
+        f"Brand: {item.get('brand') or 'Unbranded'}  |  Platform: {item['platform']}",
+        f"Style: {', '.join(item['style_tags'])}",
+        "",
+        item["description"],
+    ])
+    if session["notes"]:
+        listing_text = "ℹ️ " + " ".join(session["notes"]) + "\n\n" + listing_text
+
+    return listing_text, session["outfit_suggestion"], session["fit_card"]
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
