@@ -14,3 +14,6 @@ env/
 
 # macOS
 .DS_Store
+
+# Local-only demo script
+script.md
