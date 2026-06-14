@@ -45,7 +45,7 @@ and still pending. Update the status table as work lands.
 | M6 | README (all required sections) | `README.md` | ✅ |
 | M6 | Demo video script | `script.md` | ✅ |
 | M6 | App verified running at :7860 | `app.py` | ✅ |
-| M6 | Forked repo + push to smtanaka00 | GitHub | 🟡 |
+| M6 | Forked repo + push to smtanaka00 | GitHub | ✅ |
 | M6 | Record demo video | — | ⬜ (user) |
 
 ---
